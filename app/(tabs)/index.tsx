@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,70 +7,50 @@ import {
   TouchableOpacity,
   TextInput,
   Image,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import {
-  Search,
-  MapPin,
-  Clock,
-  Users,
-  Calendar,
-  Zap,
-  Award,
-  TrendingUp,
-} from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-
-interface Activity {
-  id: string;
-  title: string;
-  type: 'corrida' | 'ciclismo' | 'caminhada';
-  time: string;
-  location: string;
-  participants: number;
-  maxParticipants: number;
-  level: 'iniciante' | 'intermediário' | 'avançado';
-  image: string;
-}
-
-const mockActivities: Activity[] = [
-  {
-    id: '1',
-    title: 'Corrida Matinal no Ibirapuera',
-    type: 'corrida',
-    time: '06:00',
-    location: 'Parque Ibirapuera',
-    participants: 8,
-    maxParticipants: 15,
-    level: 'intermediário',
-    image: 'https://images.pexels.com/photos/2402777/pexels-photo-2402777.jpeg?auto=compress&cs=tinysrgb&w=800',
-  },
-  {
-    id: '2',
-    title: 'Pedal Urbano Centro',
-    type: 'ciclismo',
-    time: '07:30',
-    location: 'Estação da Luz',
-    participants: 12,
-    maxParticipants: 20,
-    level: 'iniciante',
-    image: 'https://images.pexels.com/photos/100582/pexels-photo-100582.jpeg?auto=compress&cs=tinysrgb&w=800',
-  },
-  {
-    id: '3',
-    title: 'Caminhada Vila Madalena',
-    type: 'caminhada',
-    time: '18:00',
-    location: 'Vila Madalena',
-    participants: 6,
-    maxParticipants: 12,
-    level: 'iniciante',
-    image: 'https://images.pexels.com/photos/1566837/pexels-photo-1566837.jpeg?auto=compress&cs=tinysrgb&w=800',
-  },
-];
+import { useAuthStore } from '@/store/authStore';
+import { useActivitiesStore } from '@/store/activitiesStore';
+import { useRouter } from 'expo-router';
+import type { Activity } from '@/types/database';
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { profile } = useAuthStore();
+  const { activities, isLoading, fetchActivities, joinActivity } = useActivitiesStore();
   const [searchQuery, setSearchQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadActivities();
+  }, []);
+
+  const loadActivities = async () => {
+    await fetchActivities();
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadActivities();
+    setRefreshing(false);
+  };
+
+  const handleJoinActivity = async (activityId: string) => {
+    if (!profile) return;
+
+    const { error } = await joinActivity(activityId, profile.id);
+
+    if (error) {
+      Alert.alert('Erro', 'Não foi possível participar da atividade');
+    } else {
+      Alert.alert('Sucesso!', 'Você está participando desta atividade');
+    }
+  };
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -98,31 +78,46 @@ export default function HomeScreen() {
     }
   };
 
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  };
+
+  const filteredActivities = activities.filter(activity =>
+    activity.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    activity.location.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
-      {/* Header com Gradiente */}
+
       <LinearGradient
         colors={['#FF6B35', '#F7931E']}
         style={styles.header}
       >
         <View style={styles.headerContent}>
           <View>
-            <Text style={styles.greeting}>Olá, João! 👋</Text>
+            <Text style={styles.greeting}>
+              Olá, {profile?.full_name?.split(' ')[0] || 'Atleta'}! 👋
+            </Text>
             <Text style={styles.subtitle}>Encontre seu próximo treino</Text>
           </View>
           <TouchableOpacity style={styles.notificationButton}>
-            <Zap size={24} color="white" />
+            <Ionicons name="notifications" size={24} color="white" />
             <View style={styles.notificationBadge}>
-              <Text style={styles.badgeText}>3</Text>
+              <Text style={styles.badgeText}>0</Text>
             </View>
           </TouchableOpacity>
         </View>
 
-        {/* Search Bar */}
         <View style={styles.searchContainer}>
-          <Search size={20} color="#6B7280" style={styles.searchIcon} />
+          <Ionicons name="search" size={20} color="#6B7280" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
             placeholder="Buscar atividades, locais..."
@@ -133,89 +128,126 @@ export default function HomeScreen() {
         </View>
       </LinearGradient>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Stats Cards */}
+      <ScrollView
+        style={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
-            <TrendingUp size={24} color="#10B981" />
-            <Text style={styles.statNumber}>24</Text>
+            <Ionicons name="trending-up" size={24} color="#10B981" />
+            <Text style={styles.statNumber}>0</Text>
             <Text style={styles.statLabel}>Atividades</Text>
           </View>
           <View style={styles.statCard}>
-            <Users size={24} color="#4A90E2" />
-            <Text style={styles.statNumber}>156</Text>
-            <Text style={styles.statLabel}>Conexões</Text>
+            <Ionicons name="people" size={24} color="#4A90E2" />
+            <Text style={styles.statNumber}>0</Text>
+            <Text style={styles.statLabel}>Grupos</Text>
           </View>
           <View style={styles.statCard}>
-            <Award size={24} color="#F59E0B" />
-            <Text style={styles.statNumber}>8</Text>
+            <Ionicons name="trophy" size={24} color="#F59E0B" />
+            <Text style={styles.statNumber}>0</Text>
             <Text style={styles.statLabel}>Conquistas</Text>
           </View>
         </View>
 
-        {/* Quick Actions */}
         <View style={styles.quickActionsContainer}>
           <Text style={styles.sectionTitle}>Ações Rápidas</Text>
           <View style={styles.quickActions}>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#FF6B35' }]}>
-              <Text style={styles.actionButtonText}>Criar Grupo</Text>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#FF6B35' }]}
+              onPress={() => Alert.alert('Em breve', 'Funcionalidade em desenvolvimento')}
+            >
+              <Text style={styles.actionButtonText}>Criar Atividade</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#4A90E2' }]}>
-              <Text style={styles.actionButtonText}>Encontrar Grupos</Text>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#4A90E2' }]}
+              onPress={() => router.push('/(tabs)/groups')}
+            >
+              <Text style={styles.actionButtonText}>Ver Grupos</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Atividades Próximas */}
         <View style={styles.activitiesContainer}>
           <Text style={styles.sectionTitle}>Atividades Próximas</Text>
-          
-          {mockActivities.map((activity) => (
-            <TouchableOpacity key={activity.id} style={styles.activityCard}>
-              <Image source={{ uri: activity.image }} style={styles.activityImage} />
-              
-              <View style={styles.activityContent}>
-                <View style={styles.activityHeader}>
-                  <Text style={styles.activityTitle}>{activity.title}</Text>
-                  <View style={[styles.levelBadge, { backgroundColor: getLevelColor(activity.level) }]}>
-                    <Text style={styles.levelText}>{activity.level}</Text>
-                  </View>
-                </View>
 
-                <View style={styles.activityDetails}>
-                  <View style={styles.detailItem}>
-                    <Text style={styles.activityType}>
-                      {getTypeIcon(activity.type)} {activity.type.charAt(0).toUpperCase() + activity.type.slice(1)}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <Clock size={16} color="#6B7280" />
-                    <Text style={styles.detailText}>{activity.time}</Text>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <MapPin size={16} color="#6B7280" />
-                    <Text style={styles.detailText}>{activity.location}</Text>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <Users size={16} color="#6B7280" />
-                    <Text style={styles.detailText}>
-                      {activity.participants}/{activity.maxParticipants}
-                    </Text>
-                  </View>
-                </View>
+          {isLoading && !refreshing ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#FF6B35" />
+            </View>
+          ) : filteredActivities.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="calendar-outline" size={64} color="#D1D5DB" />
+              <Text style={styles.emptyText}>Nenhuma atividade encontrada</Text>
+              <Text style={styles.emptySubtext}>
+                {searchQuery
+                  ? 'Tente buscar por outro termo'
+                  : 'Seja o primeiro a criar uma atividade!'}
+              </Text>
+            </View>
+          ) : (
+            filteredActivities.map((activity) => (
+              <TouchableOpacity key={activity.id} style={styles.activityCard}>
+                {activity.image_url && (
+                  <Image
+                    source={{ uri: activity.image_url }}
+                    style={styles.activityImage}
+                  />
+                )}
 
-                <TouchableOpacity style={styles.joinButton}>
-                  <Text style={styles.joinButtonText}>Participar</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          ))}
+                <View style={styles.activityContent}>
+                  <View style={styles.activityHeader}>
+                    <Text style={styles.activityTitle}>{activity.title}</Text>
+                    <View style={[styles.levelBadge, { backgroundColor: getLevelColor(activity.skill_level) }]}>
+                      <Text style={styles.levelText}>{activity.skill_level}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.activityDetails}>
+                    <View style={styles.detailItem}>
+                      <Text style={styles.activityType}>
+                        {getTypeIcon(activity.activity_type)} {activity.activity_type.charAt(0).toUpperCase() + activity.activity_type.slice(1)}
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="calendar" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>{formatDate(activity.scheduled_at)}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="time" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>{formatTime(activity.scheduled_at)}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="location" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>{activity.location}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="people" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>
+                        {activity.current_participants}/{activity.max_participants}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.joinButton}
+                    onPress={() => handleJoinActivity(activity.id)}
+                  >
+                    <Text style={styles.joinButtonText}>Participar</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
-        {/* Espaçamento para bottom tabs */}
         <View style={styles.bottomSpacing} />
       </ScrollView>
     </View>
@@ -350,6 +382,26 @@ const styles = StyleSheet.create({
   },
   activitiesContainer: {
     paddingHorizontal: 20,
+  },
+  loadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4B5563',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    marginTop: 8,
+    textAlign: 'center',
   },
   activityCard: {
     backgroundColor: 'white',
