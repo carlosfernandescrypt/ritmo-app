@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,90 +8,74 @@ import {
   TextInput,
   Image,
   Modal,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import {
-  Search,
-  Filter,
-  Plus,
-  MapPin,
-  Users,
-  Clock,
-  Calendar,
-  X,
-} from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-
-interface Group {
-  id: string;
-  name: string;
-  type: 'corrida' | 'ciclismo' | 'caminhada';
-  members: number;
-  maxMembers: number;
-  location: string;
-  schedule: string;
-  level: 'iniciante' | 'intermediário' | 'avançado';
-  description: string;
-  image: string;
-  isJoined: boolean;
-}
-
-const mockGroups: Group[] = [
-  {
-    id: '1',
-    name: 'Corredores do Ibirapuera',
-    type: 'corrida',
-    members: 45,
-    maxMembers: 60,
-    location: 'Ibirapuera',
-    schedule: 'Seg, Qua, Sex - 06:00',
-    level: 'intermediário',
-    description: 'Grupo para corredores que buscam melhorar o condicionamento físico',
-    image: 'https://images.pexels.com/photos/2402777/pexels-photo-2402777.jpeg?auto=compress&cs=tinysrgb&w=800',
-    isJoined: true,
-  },
-  {
-    id: '2',
-    name: 'Pedal Urbano SP',
-    type: 'ciclismo',
-    members: 32,
-    maxMembers: 50,
-    location: 'Centro',
-    schedule: 'Sáb, Dom - 07:00',
-    level: 'iniciante',
-    description: 'Explorando a cidade sobre duas rodas',
-    image: 'https://images.pexels.com/photos/100582/pexels-photo-100582.jpeg?auto=compress&cs=tinysrgb&w=800',
-    isJoined: false,
-  },
-  {
-    id: '3',
-    name: 'Caminhada Matinal',
-    type: 'caminhada',
-    members: 18,
-    maxMembers: 25,
-    location: 'Vila Madalena',
-    schedule: 'Todos os dias - 06:30',
-    level: 'iniciante',
-    description: 'Começe o dia com energia e boas companhias',
-    image: 'https://images.pexels.com/photos/1566837/pexels-photo-1566837.jpeg?auto=compress&cs=tinysrgb&w=800',
-    isJoined: false,
-  },
-];
+import { useAuthStore } from '@/store/authStore';
+import { useGroupsStore } from '@/store/groupsStore';
 
 export default function GroupsScreen() {
+  const { profile } = useAuthStore();
+  const { groups, myGroups, isLoading, fetchGroups, fetchMyGroups, joinGroup, leaveGroup } = useGroupsStore();
+
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedType, setSelectedType] = useState<string>('todos');
   const [selectedLevel, setSelectedLevel] = useState<string>('todos');
-  const [groups, setGroups] = useState(mockGroups);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showMyGroups, setShowMyGroups] = useState(false);
 
-  const handleJoinGroup = (groupId: string) => {
-    setGroups(prev => 
-      prev.map(group => 
-        group.id === groupId 
-          ? { ...group, isJoined: !group.isJoined, members: group.isJoined ? group.members - 1 : group.members + 1 }
-          : group
-      )
-    );
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    await fetchGroups({ activityType: selectedType, skillLevel: selectedLevel });
+    if (profile) {
+      await fetchMyGroups(profile.id);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  };
+
+  const handleJoinGroup = async (groupId: string) => {
+    if (!profile) return;
+
+    const isJoined = myGroups.some(g => g.id === groupId);
+
+    if (isJoined) {
+      const { error } = await leaveGroup(groupId, profile.id);
+      if (error) {
+        Alert.alert('Erro', 'Não foi possível sair do grupo');
+      } else {
+        Alert.alert('Sucesso!', 'Você saiu do grupo');
+        await loadData();
+      }
+    } else {
+      const { error } = await joinGroup(groupId, profile.id);
+      if (error) {
+        Alert.alert('Erro', 'Não foi possível entrar no grupo');
+      } else {
+        Alert.alert('Sucesso!', 'Você entrou no grupo!');
+        await loadData();
+      }
+    }
+  };
+
+  const applyFilters = async () => {
+    setShowFilters(false);
+    await fetchGroups({
+      activityType: selectedType,
+      skillLevel: selectedLevel,
+      searchQuery
+    });
   };
 
   const getTypeIcon = (type: string) => {
@@ -112,32 +96,49 @@ export default function GroupsScreen() {
     }
   };
 
-  const filteredGroups = groups.filter(group => {
-    const matchesSearch = group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         group.location.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = selectedType === 'todos' || group.type === selectedType;
-    const matchesLevel = selectedLevel === 'todos' || group.level === selectedLevel;
-    
-    return matchesSearch && matchesType && matchesLevel;
-  });
+  const displayGroups = showMyGroups ? myGroups : groups;
+  const filteredGroups = displayGroups.filter(group =>
+    group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    group.location.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
-      
-      {/* Header */}
+
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Grupos</Text>
-          <TouchableOpacity style={styles.createButton}>
-            <Plus size={20} color="white" />
+          <TouchableOpacity
+            style={styles.createButton}
+            onPress={() => Alert.alert('Em breve', 'Funcionalidade em desenvolvimento')}
+          >
+            <Ionicons name="add" size={24} color="white" />
           </TouchableOpacity>
         </View>
-        
-        {/* Search and Filter */}
+
+        <View style={styles.tabsContainer}>
+          <TouchableOpacity
+            style={[styles.tab, !showMyGroups && styles.activeTab]}
+            onPress={() => setShowMyGroups(false)}
+          >
+            <Text style={[styles.tabText, !showMyGroups && styles.activeTabText]}>
+              Explorar
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, showMyGroups && styles.activeTab]}
+            onPress={() => setShowMyGroups(true)}
+          >
+            <Text style={[styles.tabText, showMyGroups && styles.activeTabText]}>
+              Meus Grupos ({myGroups.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.searchRow}>
           <View style={styles.searchContainer}>
-            <Search size={20} color="#6B7280" />
+            <Ionicons name="search" size={20} color="#6B7280" />
             <TextInput
               style={styles.searchInput}
               placeholder="Buscar grupos..."
@@ -146,78 +147,108 @@ export default function GroupsScreen() {
               placeholderTextColor="#9CA3AF"
             />
           </View>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.filterButton}
             onPress={() => setShowFilters(true)}
           >
-            <Filter size={20} color="#FF6B35" />
+            <Ionicons name="filter" size={20} color="#FF6B35" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Groups List */}
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {filteredGroups.map((group) => (
-          <TouchableOpacity key={group.id} style={styles.groupCard}>
-            <Image source={{ uri: group.image }} style={styles.groupImage} />
-            
-            <View style={styles.groupInfo}>
-              <View style={styles.groupHeader}>
-                <View style={styles.groupTitle}>
-                  <Text style={styles.groupName}>{group.name}</Text>
-                  <View style={[styles.levelBadge, { backgroundColor: getLevelColor(group.level) }]}>
-                    <Text style={styles.levelText}>{group.level}</Text>
+      <ScrollView
+        style={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        {isLoading && !refreshing ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#FF6B35" />
+          </View>
+        ) : filteredGroups.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="people-outline" size={64} color="#D1D5DB" />
+            <Text style={styles.emptyText}>
+              {showMyGroups ? 'Você ainda não participa de nenhum grupo' : 'Nenhum grupo encontrado'}
+            </Text>
+            <Text style={styles.emptySubtext}>
+              {showMyGroups
+                ? 'Explore grupos e comece a se conectar!'
+                : 'Tente ajustar os filtros ou seja o primeiro a criar um grupo!'}
+            </Text>
+          </View>
+        ) : (
+          filteredGroups.map((group) => {
+            const isJoined = myGroups.some(g => g.id === group.id);
+
+            return (
+              <TouchableOpacity key={group.id} style={styles.groupCard}>
+                {group.image_url && (
+                  <Image source={{ uri: group.image_url }} style={styles.groupImage} />
+                )}
+
+                <View style={styles.groupInfo}>
+                  <View style={styles.groupHeader}>
+                    <View style={styles.groupTitle}>
+                      <Text style={styles.groupName}>{group.name}</Text>
+                      <View style={[styles.levelBadge, { backgroundColor: getLevelColor(group.skill_level) }]}>
+                        <Text style={styles.levelText}>{group.skill_level}</Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.groupType}>
+                      {getTypeIcon(group.activity_type)} {group.activity_type.charAt(0).toUpperCase() + group.activity_type.slice(1)}
+                    </Text>
                   </View>
-                </View>
-                
-                <Text style={styles.groupType}>
-                  {getTypeIcon(group.type)} {group.type.charAt(0).toUpperCase() + group.type.slice(1)}
-                </Text>
-              </View>
 
-              <Text style={styles.groupDescription}>{group.description}</Text>
-
-              <View style={styles.groupDetails}>
-                <View style={styles.detailItem}>
-                  <MapPin size={16} color="#6B7280" />
-                  <Text style={styles.detailText}>{group.location}</Text>
-                </View>
-                
-                <View style={styles.detailItem}>
-                  <Clock size={16} color="#6B7280" />
-                  <Text style={styles.detailText}>{group.schedule}</Text>
-                </View>
-                
-                <View style={styles.detailItem}>
-                  <Users size={16} color="#6B7280" />
-                  <Text style={styles.detailText}>
-                    {group.members}/{group.maxMembers} membros
+                  <Text style={styles.groupDescription} numberOfLines={2}>
+                    {group.description}
                   </Text>
-                </View>
-              </View>
 
-              <TouchableOpacity 
-                style={[
-                  styles.actionButton,
-                  group.isJoined ? styles.joinedButton : styles.joinButton
-                ]}
-                onPress={() => handleJoinGroup(group.id)}
-              >
-                <Text style={[
-                  styles.actionButtonText,
-                  group.isJoined ? styles.joinedButtonText : styles.joinButtonText
-                ]}>
-                  {group.isJoined ? 'Sair do Grupo' : 'Entrar no Grupo'}
-                </Text>
+                  <View style={styles.groupDetails}>
+                    <View style={styles.detailItem}>
+                      <Ionicons name="location" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>{group.city}, {group.state}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="time" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>{group.schedule}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Ionicons name="people" size={16} color="#6B7280" />
+                      <Text style={styles.detailText}>
+                        {group.current_members}/{group.max_members} membros
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      isJoined ? styles.joinedButton : styles.joinButton
+                    ]}
+                    onPress={() => handleJoinGroup(group.id)}
+                  >
+                    <Text style={[
+                      styles.actionButtonText,
+                      isJoined ? styles.joinedButtonText : styles.joinButtonText
+                    ]}>
+                      {isJoined ? 'Sair do Grupo' : 'Entrar no Grupo'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        ))}
-        
+            );
+          })
+        )}
+
         <View style={styles.bottomSpacing} />
       </ScrollView>
 
-      {/* Filter Modal */}
       <Modal
         visible={showFilters}
         animationType="slide"
@@ -228,7 +259,7 @@ export default function GroupsScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Filtros</Text>
               <TouchableOpacity onPress={() => setShowFilters(false)}>
-                <X size={24} color="#6B7280" />
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
@@ -280,7 +311,7 @@ export default function GroupsScreen() {
 
             <TouchableOpacity
               style={styles.applyButton}
-              onPress={() => setShowFilters(false)}
+              onPress={applyFilters}
             >
               <Text style={styles.applyButtonText}>Aplicar Filtros</Text>
             </TouchableOpacity>
@@ -326,6 +357,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  tabsContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  activeTab: {
+    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  activeTabText: {
+    color: '#FF6B35',
+  },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -357,6 +417,28 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingTop: 20,
+  },
+  loadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    paddingVertical: 60,
+    paddingHorizontal: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4B5563',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    marginTop: 8,
+    textAlign: 'center',
   },
   groupCard: {
     backgroundColor: 'white',
